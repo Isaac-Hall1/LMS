@@ -285,6 +285,21 @@ namespace LMS_CustomIdentity.Controllers
             db.Assignments.Add(a);
             db.SaveChanges();
 
+            var enrolledStudents = (from course in db.Courses
+                                join cls in db.Classes on course.CourseId equals cls.CourseId
+                                join e in db.Enrolleds on cls.ClassId equals e.ClassId
+                                where course.Listing == subject
+                                      && course.Num == num
+                                      && cls.Season == season
+                                      && cls.SemesterYear == year
+                                select e.UId).ToList();
+
+            // Update grade for each student
+            foreach (var uid in enrolledStudents)
+                {
+                UpdateStudentGrade(uid, subject, num, season, year);
+                }
+
             return Json(new { success = true });
         }
 
@@ -358,9 +373,91 @@ namespace LMS_CustomIdentity.Controllers
 
             query.FirstOrDefault().Score = (uint?)score;
             db.SaveChanges();
+
+            UpdateStudentGrade(uid, subject, num, season, year);
+
             return Json(new { success = true });
         }
+        private void UpdateStudentGrade(string uid, string subject, int num, string season, int year)
+        {
+            var theClass = (from c in db.Classes
+                            join course in db.Courses on c.CourseId equals course.CourseId
+                            where course.Listing == subject && course.Num == num &&
+                                  c.Season == season && c.SemesterYear == year
+                            select c).FirstOrDefault();
 
+            if (theClass == null)
+                return;
+
+            int classId = theClass.ClassId;
+
+            var categories = db.AssignmentCategories
+                               .Where(cat => cat.ClassId == classId)
+                               .ToList();
+
+            double totalWeightedScore = 0.0;
+            double totalWeightUsed = 0.0;
+
+            foreach (var cat in categories)
+            {
+            var assignments = db.Assignments
+                                .Where(a => a.CatId == cat.CatId)
+                                .ToList();
+
+            if (assignments.Count == 0)
+                continue; 
+
+            double totalEarned = 0.0;
+            double totalPossible = 0.0;
+
+            foreach (var a in assignments)
+            {
+            var submission = db.Submissions
+                               .Where(s => s.AssignmentId == a.AssignmentId && s.UId == uid)
+                               .FirstOrDefault();
+
+            uint earned = (submission != null && submission.Score != null) ? submission.Score.Value : 0;
+            totalEarned += earned;
+            totalPossible += a.Points;
+            }
+
+            if (totalPossible == 0)
+                continue; 
+
+            double percentage = totalEarned / totalPossible;
+            totalWeightedScore += percentage * cat.Weight;
+            totalWeightUsed += cat.Weight;
+            }
+
+            double scaledScore = (totalWeightUsed == 0) ? 0.0 : (totalWeightedScore * (100.0 / totalWeightUsed));
+
+            string letterGrade = GetLetterGrade(scaledScore);
+
+            var enrollment = db.Enrolleds
+                               .Where(e => e.UId == uid && e.ClassId == classId)
+                               .FirstOrDefault();
+
+            if (enrollment != null)
+            {
+            enrollment.Grade = letterGrade;
+            db.SaveChanges();
+        }
+        }
+        private string GetLetterGrade(double score)
+        {
+            if (score >= 93) return "A";
+            if (score >= 90) return "A-";
+            if (score >= 87) return "B+";
+            if (score >= 83) return "B";
+            if (score >= 80) return "B-";
+            if (score >= 77) return "C+";
+            if (score >= 73) return "C";
+            if (score >= 70) return "C-";
+            if (score >= 67) return "D+";
+            if (score >= 63) return "D";
+            if (score >= 60) return "D-";
+            return "--";
+        }
 
         /// <summary>
         /// Returns a JSON array of the classes taught by the specified professor
@@ -379,6 +476,7 @@ namespace LMS_CustomIdentity.Controllers
                 from p in db.Professors
                 join classes in db.Classes on p.UId equals classes.TeacherId
                 join courses in db.Courses on classes.CourseId equals courses.CourseId
+                where p.UId == uid
                 select new
                 {
                     subject = courses.Listing,
