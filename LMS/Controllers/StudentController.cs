@@ -267,9 +267,9 @@ namespace LMS.Controllers
 
             double totalGpa = query.ToList().Select(g => gpaConv[g]).Sum();
 
-            double gpa = totalGpa / query.Count();
+            double gpa = totalGpa / (double) query.Count();
 
-            return Json(new {gpa = Math.Round(gpa, 2)});
+            return Json(new {gpa =gpa });
         }
                 
         /*******End code to modify********/
